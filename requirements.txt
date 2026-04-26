@@ -1,4 +1,5 @@
 attrs # MIT
+cachetools>=5.0.0 # MIT
 pbr>=5.8.0 # Apache-2.0
 fastapi>=0.111.0 # MIT
 pydantic>=2.11.7,<3.0.0 # MIT
