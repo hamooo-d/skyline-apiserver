@@ -610,34 +610,34 @@ def list_volumes(
     server_ids = list(server_ids_set)
     server_name_map = {}
     servers = []
-    for server_id in server_ids:
+    if server_ids:
+        wanted = set(server_ids)
+        # Single bulk fetch + client-side filter beats 2N sequential per-uuid
+        # nova calls.
         normal_servers = nova.list_servers(
             profile=profile,
             session=current_session,
             global_request_id=x_openstack_request_id,
-            search_opts={
-                "uuid": server_id,
-                "all_tenants": all_projects,
-            },
+            search_opts={"all_tenants": all_projects},
         )
-        if normal_servers:
-            servers.extend(normal_servers)
+        for s in normal_servers or []:
+            if s.id in wanted:
+                servers.append(s)
 
-    # Query soft deleted server
-    for server_id in server_ids:
+        # Soft-deleted servers (separate query: nova doesn't merge them).
         soft_deleted_servers = nova.list_servers(
             profile=profile,
             session=current_session,
             global_request_id=x_openstack_request_id,
             search_opts={
-                "uuid": server_id,
                 "status": "soft_deleted",
                 "deleted": True,
                 "all_tenants": all_projects,
             },
         )
-        if soft_deleted_servers:
-            servers.extend(soft_deleted_servers)
+        for s in soft_deleted_servers or []:
+            if s.id in wanted:
+                servers.append(s)
 
     for server in servers:
         server_name_map[server.id] = server.name
@@ -1000,21 +1000,20 @@ def list_ports(
         nets_list = nets.get("networks", [])
         networks_result.extend(nets_list)
 
-    server_ids = list(set(server_ids))
+    server_ids = set(server_ids)
     ser_mappings = {}
-    for server_id in server_ids:
-        servers = nova.list_servers(
+    if server_ids:
+        # Single bulk fetch + client-side filter beats N sequential per-uuid
+        # nova calls.
+        all_servers = nova.list_servers(
             profile=profile,
             session=current_session,
             global_request_id=x_openstack_request_id,
-            search_opts={
-                "uuid": server_id,
-                "all_tenants": all_projects,
-            },
+            search_opts={"all_tenants": all_projects},
         )
-        if servers:
-            server = servers[0]
-            ser_mappings[server.id] = server.name
+        for s in all_servers or []:
+            if s.id in server_ids:
+                ser_mappings[s.id] = s.name
     network_mappings = {net["id"]: net["name"] for net in networks_result}
     for port in result:
         port.server_name = ser_mappings.get(port.device_id)
