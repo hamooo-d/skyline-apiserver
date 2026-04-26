@@ -20,11 +20,21 @@ from typing import Any, Dict, List
 from keystoneauth1.identity.v3 import Token
 from keystoneauth1.session import Session
 
+from cachetools import TTLCache, cached
+from cachetools.keys import hashkey
+
 from skyline_apiserver.client import utils
 from skyline_apiserver.client.utils import get_system_session
 from skyline_apiserver.config import CONF
 from skyline_apiserver.log import LOG
 from skyline_apiserver.types import constants
+
+# Per-worker process-local caches — get_endpoints does ~2 keystone calls + 1
+# neutron extensions call (~300 ms), get_projects is 1 keystone call.
+# Both fire on every /api/v1/profile, so caching them collapses the per-page
+# fanout from ~500 ms to ~30 ms while still respecting reasonable TTLs.
+_ENDPOINTS_CACHE = TTLCache(maxsize=8, ttl=300)
+_PROJECTS_CACHE = TTLCache(maxsize=2048, ttl=60)
 
 
 def get_project_scope_token(
@@ -48,6 +58,7 @@ def get_project_scope_token(
     return keystone_token
 
 
+@cached(_ENDPOINTS_CACHE, key=lambda region: hashkey(region))
 def get_endpoints(region: str) -> Dict[str, Any]:
     access = utils.get_access(session=get_system_session())
     catalogs = access.service_catalog.get_endpoints(
@@ -86,6 +97,7 @@ def get_endpoints(region: str) -> Dict[str, Any]:
     return endpoints
 
 
+@cached(_PROJECTS_CACHE, key=lambda global_request_id, region, user: hashkey(region, user))
 def get_projects(global_request_id: str, region: str, user: str) -> List[Any]:
     kc = utils.keystone_client(
         session=get_system_session(),
