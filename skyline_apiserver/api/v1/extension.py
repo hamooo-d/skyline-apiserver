@@ -257,7 +257,7 @@ def list_servers(
         )
         project_id_name_map = {project.id: project.name for project in projects}
         for server in result:
-            server["project_name"] = project_id_name_map[server["project_id"]]
+            server["project_name"] = project_id_name_map.get(server["project_id"])
 
     return schemas.ServersResponse(**{"servers": result})
 
