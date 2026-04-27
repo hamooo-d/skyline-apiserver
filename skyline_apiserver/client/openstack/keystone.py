@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from cachetools import TTLCache, cached
+from cachetools.keys import hashkey
 from fastapi import status
 from fastapi.exceptions import HTTPException
 from keystoneauth1.exceptions.http import Unauthorized
@@ -23,6 +25,13 @@ from keystoneauth1.session import Session
 
 from skyline_apiserver import schemas
 from skyline_apiserver.client import utils
+
+# Per-worker process-local caches for keystone identity lookups fired on every
+# /api/v1/profile and login flow. Session is the per-worker system session and
+# not part of the cache key. get_token_data TTL must stay well under keystone
+# token lifetime (3600 s) so revoked tokens aren't served as valid for long.
+_TOKEN_DATA_CACHE = TTLCache(maxsize=512, ttl=30)
+_USER_CACHE = TTLCache(maxsize=2048, ttl=300)
 
 
 def list_projects(
@@ -84,11 +93,13 @@ def revoke_token(
         )
 
 
+@cached(_TOKEN_DATA_CACHE, key=lambda token, region, session: hashkey(token))
 def get_token_data(token: str, region: str, session: Session) -> Any:
     kc = utils.keystone_client(session=session, region=region)
     return kc.tokens.get_token_data(token=token)
 
 
+@cached(_USER_CACHE, key=lambda id, region, session: hashkey(id, region))
 def get_user(id: str, region: str, session: Session) -> Any:
     kc = utils.keystone_client(session=session, region=region)
     return kc.users.get(id)
